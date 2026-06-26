@@ -1,14 +1,11 @@
 ######################  CoordAtt  ####     start   by  AI&CV  ###############################
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-
-from ultralytics.nn.modules.conv import Conv
 
 
 class h_sigmoid(nn.Module):
     def __init__(self, inplace=True):
-        super(h_sigmoid, self).__init__()
+        super().__init__()
         self.relu = nn.ReLU6(inplace=inplace)
 
     def forward(self, x):
@@ -17,7 +14,7 @@ class h_sigmoid(nn.Module):
 
 class h_swish(nn.Module):
     def __init__(self, inplace=True):
-        super(h_swish, self).__init__()
+        super().__init__()
         self.sigmoid = h_sigmoid(inplace=inplace)
 
     def forward(self, x):
@@ -26,7 +23,7 @@ class h_swish(nn.Module):
 
 class CoordAtt(nn.Module):
     def __init__(self, inp, reduction=32):
-        super(CoordAtt, self).__init__()
+        super().__init__()
         self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
         self.pool_w = nn.AdaptiveAvgPool2d((1, None))
 
@@ -42,7 +39,7 @@ class CoordAtt(nn.Module):
     def forward(self, x):
         identity = x
 
-        n, c, h, w = x.size()
+        _n, _c, h, w = x.size()
         x_h = self.pool_h(x)
         x_w = self.pool_w(x).permute(0, 1, 3, 2)
 
@@ -60,5 +57,6 @@ class CoordAtt(nn.Module):
         out = identity * a_w * a_h
 
         return out
+
 
 ######################  CoordAtt  ####     end   by  AI&CV  ###############################
