@@ -1,29 +1,27 @@
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
+from __future__ import annotations
 
-import torch
 import torch.nn as nn
 
-from ultralytics.nn.modules.conv import Conv, autopad
-from ultralytics.nn.modules.block import Bottleneck, C2f, C3k
+from ultralytics.nn.modules.block import C2f, C3k
 
 
 def make_divisible(
-        value: float,
-        divisor: int,
-        min_value: Optional[float] = None,
-        round_down_protect: bool = True,
+    value: float,
+    divisor: int,
+    min_value: float | None = None,
+    round_down_protect: bool = True,
 ) -> int:
-    """
-    This function is copied from here
-    "https://github.com/tensorflow/models/blob/master/official/vision/modeling/layers/nn_layers.py"
+    """This function is copied from here
+    "https://github.com/tensorflow/models/blob/master/official/vision/modeling/layers/nn_layers.py".
 
     This is to ensure that all layers have channels that are divisible by 8.
+
     Args:
         value: A `float` of original value.
         divisor: An `int` of the divisor that need to be checked upon.
-        min_value: A `float` of  minimum value threshold.
-        round_down_protect: A `bool` indicating whether round down more than 10%
-        will be allowed.
+        min_value: A `float` of minimum value threshold.
+        round_down_protect: A `bool` indicating whether round down more than 10% will be allowed.
+
     Returns:
         The adjusted value in `int` that is divisible against divisor.
     """
@@ -39,26 +37,27 @@ def make_divisible(
 def conv_2d(inp, oup, kernel_size=3, stride=1, groups=1, bias=False, norm=True, act=True):
     conv = nn.Sequential()
     padding = (kernel_size - 1) // 2
-    conv.add_module('conv', nn.Conv2d(inp, oup, kernel_size, stride, padding, bias=bias, groups=groups))
+    conv.add_module("conv", nn.Conv2d(inp, oup, kernel_size, stride, padding, bias=bias, groups=groups))
     if norm:
-        conv.add_module('BatchNorm2d', nn.BatchNorm2d(oup))
+        conv.add_module("BatchNorm2d", nn.BatchNorm2d(oup))
     if act:
-        conv.add_module('Activation', nn.ReLU6())
+        conv.add_module("Activation", nn.ReLU6())
     return conv
 
 
 class InvertedResidual(nn.Module):
     def __init__(self, inp, oup, stride, expand_ratio, act=False):
-        super(InvertedResidual, self).__init__()
+        super().__init__()
         self.stride = stride
         assert stride in [1, 2]
-        hidden_dim = int(round(inp * expand_ratio))
+        hidden_dim = round(inp * expand_ratio)
         self.block = nn.Sequential()
         if expand_ratio != 1:
-            self.block.add_module('exp_1x1', conv_2d(inp, hidden_dim, kernel_size=1, stride=1))
-        self.block.add_module('conv_3x3',
-                              conv_2d(hidden_dim, hidden_dim, kernel_size=3, stride=stride, groups=hidden_dim))
-        self.block.add_module('red_1x1', conv_2d(hidden_dim, oup, kernel_size=1, stride=1, act=act))
+            self.block.add_module("exp_1x1", conv_2d(inp, hidden_dim, kernel_size=1, stride=1))
+        self.block.add_module(
+            "conv_3x3", conv_2d(hidden_dim, hidden_dim, kernel_size=3, stride=stride, groups=hidden_dim)
+        )
+        self.block.add_module("red_1x1", conv_2d(hidden_dim, oup, kernel_size=1, stride=1, act=act))
         self.use_res_connect = self.stride == 1 and inp == oup
 
     def forward(self, x):
@@ -69,15 +68,16 @@ class InvertedResidual(nn.Module):
 
 
 class UniversalInvertedBottleneckBlock(nn.Module):
-    def __init__(self,
-                 inp,
-                 oup,
-                 start_dw_kernel_size=0,
-                 middle_dw_kernel_size=3,
-                 middle_dw_downsample=True,
-                 stride=1,
-                 expand_ratio=2
-                 ):
+    def __init__(
+        self,
+        inp,
+        oup,
+        start_dw_kernel_size=0,
+        middle_dw_kernel_size=3,
+        middle_dw_downsample=True,
+        stride=1,
+        expand_ratio=2,
+    ):
         super().__init__()
         # Starting depthwise conv.
         self.start_dw_kernel_size = start_dw_kernel_size
@@ -91,8 +91,9 @@ class UniversalInvertedBottleneckBlock(nn.Module):
         self.middle_dw_kernel_size = middle_dw_kernel_size
         if self.middle_dw_kernel_size:
             stride_ = stride if middle_dw_downsample else 1
-            self._middle_dw = conv_2d(expand_filters, expand_filters, kernel_size=middle_dw_kernel_size, stride=stride_,
-                                      groups=expand_filters)
+            self._middle_dw = conv_2d(
+                expand_filters, expand_filters, kernel_size=middle_dw_kernel_size, stride=stride_, groups=expand_filters
+            )
         # Projection with 1x1 convs.
         self._proj_conv = conv_2d(expand_filters, oup, kernel_size=1, stride=1, act=False)
 
@@ -122,6 +123,6 @@ class C3k2_UIB(C2f):
         """Initializes the C3k2 module, a faster CSP Bottleneck with 2 convolutions and optional C3k blocks."""
         super().__init__(c1, c2, n, shortcut, g, e)
         self.m = nn.ModuleList(
-            C3k(self.c, self.c, 2, shortcut, g) if c3k else UniversalInvertedBottleneckBlock(self.c, self.c) for _ in
-            range(n)
+            C3k(self.c, self.c, 2, shortcut, g) if c3k else UniversalInvertedBottleneckBlock(self.c, self.c)
+            for _ in range(n)
         )
