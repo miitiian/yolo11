@@ -1,20 +1,22 @@
 import warnings
 
-warnings.filterwarnings('ignore')
-warnings.simplefilter('ignore')
-import torch, yaml, cv2, os, shutil, sys
+warnings.filterwarnings("ignore")
+warnings.simplefilter("ignore")
+import os
+import shutil
+
+import cv2
 import numpy as np
+import torch
 
 np.random.seed(0)
-import matplotlib.pyplot as plt
-from tqdm import trange
 from PIL import Image
-from ultralytics.nn.tasks import attempt_load_weights
-from ultralytics.utils.torch_utils import intersect_dicts
-from ultralytics.utils.ops import xywh2xyxy, non_max_suppression
-from pytorch_grad_cam import GradCAMPlusPlus, GradCAM, XGradCAM, EigenCAM, HiResCAM, LayerCAM, RandomCAM, EigenGradCAM
-from pytorch_grad_cam.utils.image import show_cam_on_image, scale_cam_image
 from pytorch_grad_cam.activations_and_gradients import ActivationsAndGradients
+from pytorch_grad_cam.utils.image import scale_cam_image, show_cam_on_image
+from tqdm import trange
+
+from ultralytics.nn.tasks import attempt_load_weights
+from ultralytics.utils.ops import non_max_suppression
 
 
 def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
@@ -30,7 +32,7 @@ def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleF
 
     # Compute padding
     ratio = r, r  # width, height ratios
-    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+    new_unpad = round(shape[1] * r), round(shape[0] * r)
     dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
     if auto:  # minimum rectangle
         dw, dh = np.mod(dw, stride), np.mod(dh, stride)  # wh padding
@@ -44,15 +46,15 @@ def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleF
 
     if shape[::-1] != new_unpad:  # resize
         im = cv2.resize(im, new_unpad, interpolation=cv2.INTER_LINEAR)
-    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
-    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    top, bottom = round(dh - 0.1), round(dh + 0.1)
+    left, right = round(dw - 0.1), round(dw + 0.1)
     im = cv2.copyMakeBorder(im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
     return im, ratio, (dw, dh)
 
 
 class ActivationsAndGradients:
-    """ Class for extracting activations and
-    registering gradients from targetted intermediate layers """
+    """Class for extracting activations and registering gradients from targeted intermediate layers.
+    """
 
     def __init__(self, model, target_layers, reshape_transform):
         self.model = model
@@ -61,12 +63,10 @@ class ActivationsAndGradients:
         self.reshape_transform = reshape_transform
         self.handles = []
         for target_layer in target_layers:
-            self.handles.append(
-                target_layer.register_forward_hook(self.save_activation))
+            self.handles.append(target_layer.register_forward_hook(self.save_activation))
             # Because of https://github.com/pytorch/pytorch/issues/61519,
             # we don't use backward hook to record gradients.
-            self.handles.append(
-                target_layer.register_forward_hook(self.save_gradient))
+            self.handles.append(target_layer.register_forward_hook(self.save_gradient))
 
     def save_activation(self, module, input, output):
         activation = output
@@ -83,7 +83,7 @@ class ActivationsAndGradients:
         def _store_grad(grad):
             if self.reshape_transform is not None:
                 grad = self.reshape_transform(grad)
-            self.gradients = [grad.cpu().detach()] + self.gradients
+            self.gradients = [grad.cpu().detach(), *self.gradients]
 
         output.register_hook(_store_grad)
 
@@ -93,11 +93,12 @@ class ActivationsAndGradients:
             boxes_ = result[:, :4]
             sorted, indices = torch.sort(logits_.max(1)[0], descending=True)
             return torch.transpose(logits_[0], dim0=0, dim1=1)[indices[0]], torch.transpose(boxes_[0], dim0=0, dim1=1)[
-                indices[0]]
+                indices[0]
+            ]
         else:
             logits_ = result[:, :, 4:]
             boxes_ = result[:, :, :4]
-            sorted, indices = torch.sort(logits_[:, :, 0], descending=True)
+            _sorted, indices = torch.sort(logits_[:, :, 0], descending=True)
             return logits_[0][indices[0]], boxes_[0][indices[0]]
 
     def __call__(self, x):
@@ -125,14 +126,15 @@ class yolo11_target(torch.nn.Module):
         result = []
         for i in trange(int(post_result.size(0) * self.ratio)):
             if (self.end2end and float(post_result[i, 0]) < self.conf) or (
-                    not self.end2end and float(post_result[i].max()) < self.conf):
+                not self.end2end and float(post_result[i].max()) < self.conf
+            ):
                 break
-            if self.ouput_type == 'class' or self.ouput_type == 'all':
+            if self.ouput_type == "class" or self.ouput_type == "all":
                 if self.end2end:
                     result.append(post_result[i, 0])
                 else:
                     result.append(post_result[i].max())
-            elif self.ouput_type == 'box' or self.ouput_type == 'all':
+            elif self.ouput_type == "box" or self.ouput_type == "all":
                 for j in range(4):
                     result.append(pre_post_boxes[i, j])
         return sum(result)
@@ -142,26 +144,25 @@ class yolo11_heatmap:
     def __init__(self, weight, device, method, layer, backward_type, conf_threshold, ratio, show_box, renormalize):
         device = torch.device(device)
         ckpt = torch.load(weight)
-        model_names = ckpt['model'].names
+        model_names = ckpt["model"].names
         model = attempt_load_weights(weight, device)
         model.info()
         for p in model.parameters():
             p.requires_grad_(True)
         model.eval()
 
-        if not hasattr(model, 'end2end'):
+        if not hasattr(model, "end2end"):
             model.end2end = False
 
         target = yolo11_target(backward_type, conf_threshold, ratio, model.end2end)
         target_layers = [model.model[l] for l in layer]
-        #method = eval(method)(model, target_layers, use_cuda=device.type == 'cuda')
-        #method.activations_and_grads = ActivationsAndGradients(model, target_layers, None)
+        # method = eval(method)(model, target_layers, use_cuda=device.type == 'cuda')
+        # method.activations_and_grads = ActivationsAndGradients(model, target_layers, None)
 
         # 修改为
         method = eval(method)(model, target_layers)  # 移除 use_cuda
         method.activations_and_grads = ActivationsAndGradients(model, target_layers, None)
         self._internal_ag = method.activations_and_grads  # 增加外部引用，防止提前释放
-
 
         colors = np.random.uniform(0, 255, size=(len(model_names), 3)).astype(np.int32)
         self.__dict__.update(locals())
@@ -173,13 +174,22 @@ class yolo11_heatmap:
     def draw_detections(self, box, color, name, img):
         xmin, ymin, xmax, ymax = list(map(int, list(box)))
         cv2.rectangle(img, (xmin, ymin), (xmax, ymax), tuple(int(x) for x in color), 2)
-        cv2.putText(img, str(name), (xmin, ymin - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, tuple(int(x) for x in color), 2,
-                    lineType=cv2.LINE_AA)
+        cv2.putText(
+            img,
+            str(name),
+            (xmin, ymin - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            tuple(int(x) for x in color),
+            2,
+            lineType=cv2.LINE_AA,
+        )
         return img
 
     def renormalize_cam_in_bounding_boxes(self, boxes, image_float_np, grayscale_cam):
-        """Normalize the CAM to be in the range [0, 1]
-        inside every bounding boxes, and zero outside of the bounding boxes. """
+        """Normalize the CAM to be in the range [0, 1] inside every bounding boxes, and zero outside of the bounding
+        boxes.
+        """
         renormalized_cam = np.zeros(grayscale_cam.shape, dtype=np.float32)
         for x1, y1, x2, y2 in boxes:
             x1, y1 = max(x1, 0), max(y1, 0)
@@ -199,7 +209,7 @@ class yolo11_heatmap:
 
         try:
             grayscale_cam = self.method(tensor, [self.target])
-        except AttributeError as e:
+        except AttributeError:
             return
 
         grayscale_cam = grayscale_cam[0, :]
@@ -211,13 +221,18 @@ class yolo11_heatmap:
         else:
             pred = pred[0][pred[0, :, 4] > self.conf_threshold]
         if self.renormalize:
-            cam_image = self.renormalize_cam_in_bounding_boxes(pred[:, :4].cpu().detach().numpy().astype(np.int32), img,
-                                                               grayscale_cam)
+            cam_image = self.renormalize_cam_in_bounding_boxes(
+                pred[:, :4].cpu().detach().numpy().astype(np.int32), img, grayscale_cam
+            )
         if self.show_box:
             for data in pred:
                 data = data.cpu().detach().numpy()
-                cam_image = self.draw_detections(data[:4], self.colors[int(data[5])],
-                                                 f'{self.model_names[int(data[5])]} {float(data[4]):.2f}', cam_image)
+                cam_image = self.draw_detections(
+                    data[:4],
+                    self.colors[int(data[5])],
+                    f"{self.model_names[int(data[5])]} {float(data[4]):.2f}",
+                    cam_image,
+                )
 
         cam_image = Image.fromarray(cam_image)
         cam_image.save(save_path)
@@ -230,27 +245,27 @@ class yolo11_heatmap:
         os.makedirs(save_path, exist_ok=True)
         if os.path.isdir(img_path):
             for img_path_ in os.listdir(img_path):
-                self.process(f'{img_path}/{img_path_}', f'{save_path}/{img_path_}')
+                self.process(f"{img_path}/{img_path_}", f"{save_path}/{img_path_}")
         else:
-            self.process(img_path, f'{save_path}/result.png')
+            self.process(img_path, f"{save_path}/result.png")
 
 
 def get_params():
     params = {
-        'weight': 'pre-trained weights/yolo11n.pt',  # 现在只需要指定权重即可,不需要指定cfg
-        'device': 'cuda:0',
-        'method': 'HiResCAM',
+        "weight": "pre-trained weights/yolo11n.pt",  # 现在只需要指定权重即可,不需要指定cfg
+        "device": "cuda:0",
+        "method": "HiResCAM",
         # GradCAMPlusPlus, GradCAM, XGradCAM, EigenCAM, HiResCAM, LayerCAM, RandomCAM, EigenGradCAM
-        'layer': [10, 12, 14, 16, 18],
-        'backward_type': 'class',  # class, box, all
-        'conf_threshold': 0.2,  # 0.2
-        'ratio': 0.02,  # 0.02-0.1
-        'show_box': False,  # 不需要绘制框请设置为False
-        'renormalize': True  # 需要把热力图限制在框内请设置为True
+        "layer": [10, 12, 14, 16, 18],
+        "backward_type": "class",  # class, box, all
+        "conf_threshold": 0.2,  # 0.2
+        "ratio": 0.02,  # 0.02-0.1
+        "show_box": False,  # 不需要绘制框请设置为False
+        "renormalize": True,  # 需要把热力图限制在框内请设置为True
     }
     return params
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     model = yolo11_heatmap(**get_params())
-    model(r'D:\ultralytics-yolo\gam', 'result')
+    model(r"D:\ultralytics-yolo\gam", "result")
