@@ -1,0 +1,9 @@
+ # dataset path
+train: D:\project\ultralytics-yolo\ceshi\train\images
+val: D:\project\ultralytics-yolo\ceshi\valid\images
+
+# number of classes
+nc: 7
+
+# class names
+names: ['Initial-cold-stress','Initial-heat-stress','Mid-term-cold-stress','Mid-term-heat-stress','Normal','Severe-phase-of-cold-stress','Severe-phase-of-heat-stress']
