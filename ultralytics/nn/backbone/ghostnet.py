@@ -4,17 +4,19 @@
 Creates a GhostNet Model as defined in:
 GhostNet: More Features from Cheap Operations By Kai Han, Yunhe Wang, Qi Tian, Jianyuan Guo, Chunjing Xu, Chang Xu.
 https://arxiv.org/abs/1911.11907
-Modified from https://github.com/d-li14/mobilenetv3.pytorch and https://github.com/rwightman/pytorch-image-models
+Modified from https://github.com/d-li14/mobilenetv3.pytorch and https://github.com/rwightman/pytorch-image-models.
 """
+
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import math
 
+from ultralytics.nn.modules.block import C2f, C3k
 from ultralytics.nn.modules.conv import Conv, autopad
-from ultralytics.nn.modules.block import Bottleneck, C2f, C3k
 
-__all__ = ['ghostnet']
+__all__ = ["ghostnet"]
 
 
 def autopad(k, p=None, d=1):  # kernel, padding, dilation
@@ -44,11 +46,9 @@ class Conv(nn.Module):
 
 
 def _make_divisible(v, divisor, min_value=None):
-    """
-    This function is taken from the original tf repo.
-    It ensures that all layers have a channel number that is divisible by 8
-    It can be seen here:
-    https://github.com/tensorflow/models/blob/master/research/slim/nets/mobilenet/mobilenet.py
+    """This function is taken from the original tf repo. It ensures that all layers have a channel number that is
+    divisible by 8 It can be seen
+    here: https://github.com/tensorflow/models/blob/master/research/slim/nets/mobilenet/mobilenet.py.
     """
     if min_value is None:
         min_value = divisor
@@ -61,15 +61,16 @@ def _make_divisible(v, divisor, min_value=None):
 
 def hard_sigmoid(x, inplace: bool = False):
     if inplace:
-        return x.add_(3.).clamp_(0., 6.).div_(6.)
+        return x.add_(3.0).clamp_(0.0, 6.0).div_(6.0)
     else:
-        return F.relu6(x + 3.) / 6.
+        return F.relu6(x + 3.0) / 6.0
 
 
 class SqueezeExcite(nn.Module):
-    def __init__(self, in_chs, se_ratio=0.25, reduced_base_chs=None,
-                 act_layer=nn.ReLU, gate_fn=hard_sigmoid, divisor=4, **_):
-        super(SqueezeExcite, self).__init__()
+    def __init__(
+        self, in_chs, se_ratio=0.25, reduced_base_chs=None, act_layer=nn.ReLU, gate_fn=hard_sigmoid, divisor=4, **_
+    ):
+        super().__init__()
         self.gate_fn = gate_fn
         reduced_chs = _make_divisible((reduced_base_chs or in_chs) * se_ratio, divisor)
         self.avg_pool = nn.AdaptiveAvgPool2d(1)
@@ -87,9 +88,8 @@ class SqueezeExcite(nn.Module):
 
 
 class ConvBnAct(nn.Module):
-    def __init__(self, in_chs, out_chs, kernel_size,
-                 stride=1, act_layer=nn.ReLU):
-        super(ConvBnAct, self).__init__()
+    def __init__(self, in_chs, out_chs, kernel_size, stride=1, act_layer=nn.ReLU):
+        super().__init__()
         self.conv = nn.Conv2d(in_chs, out_chs, kernel_size, stride, kernel_size // 2, bias=False)
         self.bn1 = nn.BatchNorm2d(out_chs)
         self.act1 = act_layer(inplace=True)
@@ -103,7 +103,7 @@ class ConvBnAct(nn.Module):
 
 class GhostModule(nn.Module):
     def __init__(self, inp, oup, kernel_size=1, ratio=2, dw_size=3, stride=1, relu=True):
-        super(GhostModule, self).__init__()
+        super().__init__()
         self.oup = oup
         init_channels = math.ceil(oup / ratio)
         new_channels = init_channels * (ratio - 1)
@@ -124,16 +124,15 @@ class GhostModule(nn.Module):
         x1 = self.primary_conv(x)
         x2 = self.cheap_operation(x1)
         out = torch.cat([x1, x2], dim=1)
-        return out[:, :self.oup, :, :]
+        return out[:, : self.oup, :, :]
 
 
 class GhostBottleneck(nn.Module):
-    """ Ghost bottleneck w/ optional SE"""
+    """Ghost bottleneck w/ optional SE."""
 
-    def __init__(self, in_chs, mid_chs, out_chs, dw_kernel_size=3,
-                 stride=1, act_layer=nn.ReLU, se_ratio=0.):
-        super(GhostBottleneck, self).__init__()
-        has_se = se_ratio is not None and se_ratio > 0.
+    def __init__(self, in_chs, mid_chs, out_chs, dw_kernel_size=3, stride=1, act_layer=nn.ReLU, se_ratio=0.0):
+        super().__init__()
+        has_se = se_ratio is not None and se_ratio > 0.0
         self.stride = stride
 
         # Point-wise expansion
@@ -141,9 +140,15 @@ class GhostBottleneck(nn.Module):
 
         # Depth-wise convolution
         if self.stride > 1:
-            self.conv_dw = nn.Conv2d(mid_chs, mid_chs, dw_kernel_size, stride=stride,
-                                     padding=(dw_kernel_size - 1) // 2,
-                                     groups=mid_chs, bias=False)
+            self.conv_dw = nn.Conv2d(
+                mid_chs,
+                mid_chs,
+                dw_kernel_size,
+                stride=stride,
+                padding=(dw_kernel_size - 1) // 2,
+                groups=mid_chs,
+                bias=False,
+            )
             self.bn_dw = nn.BatchNorm2d(mid_chs)
 
         # Squeeze-and-excitation
@@ -156,12 +161,19 @@ class GhostBottleneck(nn.Module):
         self.ghost2 = GhostModule(mid_chs, out_chs, relu=False)
 
         # shortcut
-        if (in_chs == out_chs and self.stride == 1):
+        if in_chs == out_chs and self.stride == 1:
             self.shortcut = nn.Sequential()
         else:
             self.shortcut = nn.Sequential(
-                nn.Conv2d(in_chs, in_chs, dw_kernel_size, stride=stride,
-                          padding=(dw_kernel_size - 1) // 2, groups=in_chs, bias=False),
+                nn.Conv2d(
+                    in_chs,
+                    in_chs,
+                    dw_kernel_size,
+                    stride=stride,
+                    padding=(dw_kernel_size - 1) // 2,
+                    groups=in_chs,
+                    bias=False,
+                ),
                 nn.BatchNorm2d(in_chs),
                 nn.Conv2d(in_chs, out_chs, 1, stride=1, padding=0, bias=False),
                 nn.BatchNorm2d(out_chs),
